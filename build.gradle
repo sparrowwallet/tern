@@ -15,6 +15,10 @@ repositories {
     mavenCentral()
 }
 
+java {
+    withSourcesJar()
+}
+
 dependencies {
     implementation('com.fasterxml.jackson.core:jackson-databind:2.17.2')
     implementation('org.eclipse.jetty:jetty-client:9.4.54.v20240208')
