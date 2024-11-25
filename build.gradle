@@ -4,7 +4,7 @@ plugins {
 }
 
 group = 'com.sparrowwallet'
-version = '1.0'
+version = '1.0.1'
 
 def secrets = new Properties()
 file("publish.properties").withInputStream {
@@ -21,7 +21,7 @@ dependencies {
     implementation('io.reactivex.rxjava2:rxjava:2.2.15')
     implementation('org.apache.commons:commons-lang3:3.7')
     implementation('com.google.guava:guava:33.0.0-jre')
-    implementation('org.slf4j:slf4j-api:1.7.30')
+    implementation('org.slf4j:slf4j-api:2.0.12')
     testImplementation platform('org.junit:junit-bom:5.10.0')
     testImplementation('org.junit.jupiter:junit-jupiter')
 }
@@ -50,6 +50,8 @@ publishing {
     publications {
         maven(MavenPublication) {
             artifactId = 'tern'
+
+            from components.java
         }
     }
 }

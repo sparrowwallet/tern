@@ -1,4 +1,4 @@
-module tern {
+module com.sparrowwallet.tern {
     requires com.google.common;
     requires io.reactivex.rxjava2;
     requires com.fasterxml.jackson.databind;
