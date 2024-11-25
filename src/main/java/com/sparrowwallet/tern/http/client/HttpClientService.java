@@ -25,4 +25,19 @@ public class HttpClientService extends JettyHttpClientService {
         IHttpClient httpClient = getHttpClient(HttpUsage.DEFAULT);
         return AsyncUtil.getInstance().blockingGet(httpClient.postString(url, headers, contentType, content)).get();
     }
+
+    public HostAndPort getTorProxy() {
+        return getHttpProxySupplier().getTorProxy();
+    }
+
+    public void setTorProxy(HostAndPort torProxy) {
+        //Ensure all http clients are shutdown first
+        stop();
+        getHttpProxySupplier()._setTorProxy(torProxy);
+    }
+
+    @Override
+    public HttpProxySupplier getHttpProxySupplier() {
+        return (HttpProxySupplier)super.getHttpProxySupplier();
+    }
 }
