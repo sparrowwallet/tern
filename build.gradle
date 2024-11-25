@@ -4,7 +4,7 @@ plugins {
 }
 
 group = 'com.sparrowwallet'
-version = '1.0.1'
+version = '1.0.2'
 
 def secrets = new Properties()
 file("publish.properties").withInputStream {

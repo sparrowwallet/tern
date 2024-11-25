@@ -7,10 +7,26 @@ import java.util.Map;
 import java.util.Optional;
 
 public class HttpClientService extends JettyHttpClientService {
-    private static final int REQUEST_TIMEOUT = 120000;
+    private static final int DEFAULT_REQUEST_TIMEOUT = 120000;
+
+    public HttpClientService() {
+        this(DEFAULT_REQUEST_TIMEOUT);
+    }
+
+    public HttpClientService(int requestTimeout) {
+        this(requestTimeout, null);
+    }
 
     public HttpClientService(HostAndPort torProxy) {
-        super(REQUEST_TIMEOUT, new HttpProxySupplier(torProxy));
+        this(DEFAULT_REQUEST_TIMEOUT, new HttpProxySupplier(torProxy));
+    }
+
+    public HttpClientService(HttpProxySupplier httpProxySupplier) {
+        this(DEFAULT_REQUEST_TIMEOUT, httpProxySupplier);
+    }
+
+    public HttpClientService(int requestTimeout, HttpProxySupplier httpProxySupplier) {
+        super(requestTimeout, httpProxySupplier);
     }
 
     public <T> T requestJson(String url, Class<T> responseType, Map<String, String> headers) throws Exception {

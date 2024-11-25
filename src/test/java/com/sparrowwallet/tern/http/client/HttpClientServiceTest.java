@@ -8,7 +8,7 @@ import java.util.Map;
 public class HttpClientServiceTest {
     @Test
     public void test() throws HttpException {
-        HttpClientService httpClientService = new HttpClientService(null);
+        HttpClientService httpClientService = new HttpClientService();
         IHttpClient httpClient = httpClientService.getHttpClient(HttpUsage.DEFAULT);
         Todo todo = httpClient.getJson("https://jsonplaceholder.typicode.com/todos/1", Todo.class, Map.of(), false);
         Assertions.assertEquals(1, todo.userId);
