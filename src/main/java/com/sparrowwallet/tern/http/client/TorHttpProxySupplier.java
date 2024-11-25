@@ -4,11 +4,11 @@ import com.google.common.net.HostAndPort;
 
 import java.util.Optional;
 
-public class HttpProxySupplier implements IHttpProxySupplier {
+public class TorHttpProxySupplier implements IHttpProxySupplier {
     private HostAndPort torProxy;
     private HttpProxy httpProxy;
 
-    public HttpProxySupplier(HostAndPort torProxy) {
+    public TorHttpProxySupplier(HostAndPort torProxy) {
         this.torProxy = torProxy;
         this.httpProxy = computeHttpProxy(torProxy);
     }

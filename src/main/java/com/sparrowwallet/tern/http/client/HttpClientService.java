@@ -18,14 +18,14 @@ public class HttpClientService extends JettyHttpClientService {
     }
 
     public HttpClientService(HostAndPort torProxy) {
-        this(DEFAULT_REQUEST_TIMEOUT, new HttpProxySupplier(torProxy));
+        this(DEFAULT_REQUEST_TIMEOUT, new TorHttpProxySupplier(torProxy));
     }
 
-    public HttpClientService(HttpProxySupplier httpProxySupplier) {
+    public HttpClientService(IHttpProxySupplier httpProxySupplier) {
         this(DEFAULT_REQUEST_TIMEOUT, httpProxySupplier);
     }
 
-    public HttpClientService(int requestTimeout, HttpProxySupplier httpProxySupplier) {
+    public HttpClientService(int requestTimeout, IHttpProxySupplier httpProxySupplier) {
         super(requestTimeout, httpProxySupplier);
     }
 
@@ -43,17 +43,18 @@ public class HttpClientService extends JettyHttpClientService {
     }
 
     public HostAndPort getTorProxy() {
-        return getHttpProxySupplier().getTorProxy();
+        if(getHttpProxySupplier() instanceof TorHttpProxySupplier torHttpProxySupplier) {
+            return torHttpProxySupplier.getTorProxy();
+        }
+
+        return null;
     }
 
     public void setTorProxy(HostAndPort torProxy) {
-        //Ensure all http clients are shutdown first
-        stop();
-        getHttpProxySupplier()._setTorProxy(torProxy);
-    }
-
-    @Override
-    public HttpProxySupplier getHttpProxySupplier() {
-        return (HttpProxySupplier)super.getHttpProxySupplier();
+        if(getHttpProxySupplier() instanceof TorHttpProxySupplier torHttpProxySupplier) {
+            //Ensure all http clients are shutdown first
+            stop();
+            torHttpProxySupplier._setTorProxy(torProxy);
+        }
     }
 }
