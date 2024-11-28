@@ -5,6 +5,7 @@ import com.sparrowwallet.tern.http.client.socks5.Socks5Proxy;
 import org.eclipse.jetty.client.HttpClient;
 import org.eclipse.jetty.client.ProxyConfiguration;
 import org.eclipse.jetty.client.Socks4Proxy;
+import org.eclipse.jetty.util.log.Log;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.eclipse.jetty.util.thread.QueuedThreadPool;
 import org.eclipse.jetty.util.thread.ScheduledExecutorScheduler;
@@ -24,6 +25,10 @@ public class JettyHttpClientService implements IHttpClientService {
 
     // limit changing Tor identity on network error every 4 minutes
     private static final double RATE_CHANGE_IDENTITY_ON_NETWORK_ERROR = 1.0 / 240;
+
+    static {
+        Log.getProperties().setProperty("org.eclipse.jetty.util.log.announce", "false");
+    }
 
     protected Map<HttpUsage, JettyHttpClient> httpClients; // used by Sparrow
     private final IHttpProxySupplier httpProxySupplier;
