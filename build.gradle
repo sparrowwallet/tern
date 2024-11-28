@@ -4,7 +4,7 @@ plugins {
 }
 
 group = 'com.sparrowwallet'
-version = '1.0.5'
+version = '1.0.6'
 
 def secrets = new Properties()
 file("publish.properties").withInputStream {
@@ -24,7 +24,6 @@ dependencies {
     implementation('org.eclipse.jetty:jetty-client:9.4.54.v20240208')
     implementation('io.reactivex.rxjava2:rxjava:2.2.15')
     implementation('org.apache.commons:commons-lang3:3.7')
-    implementation('com.google.guava:guava:33.0.0-jre')
     implementation('org.slf4j:slf4j-api:2.0.12')
     testImplementation platform('org.junit:junit-bom:5.10.0')
     testImplementation('org.junit.jupiter:junit-jupiter')

@@ -1,6 +1,5 @@
 package com.sparrowwallet.tern.http.client;
 
-import com.google.common.util.concurrent.RateLimiter;
 import com.sparrowwallet.tern.http.client.socks5.Socks5Proxy;
 import org.eclipse.jetty.client.HttpClient;
 import org.eclipse.jetty.client.ProxyConfiguration;
@@ -24,7 +23,7 @@ public class JettyHttpClientService implements IHttpClientService {
     public static final long DEFAULT_TIMEOUT = 30000;
 
     // limit changing Tor identity on network error every 4 minutes
-    private static final double RATE_CHANGE_IDENTITY_ON_NETWORK_ERROR = 1.0 / 240;
+    private static final int RATE_CHANGE_IDENTITY_ON_NETWORK_ERROR = 4 * 60 * 1000;
 
     static {
         Log.getProperties().setProperty("org.eclipse.jetty.util.log.announce", "false");
@@ -96,7 +95,7 @@ public class JettyHttpClientService implements IHttpClientService {
     }
 
     protected Consumer<Exception> computeOnNetworkError() {
-        RateLimiter rateLimiter = RateLimiter.create(RATE_CHANGE_IDENTITY_ON_NETWORK_ERROR);
+        RateLimiter rateLimiter = new RateLimiter(1, RATE_CHANGE_IDENTITY_ON_NETWORK_ERROR);
         return e -> {
             if(!rateLimiter.tryAcquire()) {
                 if(log.isDebugEnabled()) {

@@ -1,6 +1,5 @@
 package com.sparrowwallet.tern.http.client;
 
-import com.google.common.net.HostAndPort;
 import io.reactivex.Observable;
 
 import java.util.Map;
@@ -17,8 +16,8 @@ public class HttpClientService extends JettyHttpClientService {
         this(requestTimeout, null);
     }
 
-    public HttpClientService(HostAndPort torProxy) {
-        this(DEFAULT_REQUEST_TIMEOUT, new TorHttpProxySupplier(torProxy));
+    public HttpClientService(String host, int port) {
+        this(DEFAULT_REQUEST_TIMEOUT, new DefaultHttpProxySupplier(host, port));
     }
 
     public HttpClientService(IHttpProxySupplier httpProxySupplier) {
@@ -40,21 +39,5 @@ public class HttpClientService extends JettyHttpClientService {
     public String postString(String url, Map<String, String> headers, String contentType, String content) throws Exception {
         IHttpClient httpClient = getHttpClient(HttpUsage.DEFAULT);
         return AsyncUtil.getInstance().blockingGet(httpClient.postString(url, headers, contentType, content)).get();
-    }
-
-    public HostAndPort getTorProxy() {
-        if(getHttpProxySupplier() instanceof TorHttpProxySupplier torHttpProxySupplier) {
-            return torHttpProxySupplier.getTorProxy();
-        }
-
-        return null;
-    }
-
-    public void setTorProxy(HostAndPort torProxy) {
-        if(getHttpProxySupplier() instanceof TorHttpProxySupplier torHttpProxySupplier) {
-            //Ensure all http clients are shutdown first
-            stop();
-            torHttpProxySupplier._setTorProxy(torProxy);
-        }
     }
 }
