@@ -1,11 +1,9 @@
 package com.sparrowwallet.tern.http.client;
 
-import com.sparrowwallet.tern.http.client.socks5.Socks5Proxy;
 import org.eclipse.jetty.client.HttpClient;
 import org.eclipse.jetty.client.ProxyConfiguration;
 import org.eclipse.jetty.client.Socks4Proxy;
-import org.eclipse.jetty.util.log.Log;
-import org.eclipse.jetty.util.ssl.SslContextFactory;
+import org.eclipse.jetty.client.Socks5Proxy;
 import org.eclipse.jetty.util.thread.QueuedThreadPool;
 import org.eclipse.jetty.util.thread.ScheduledExecutorScheduler;
 import org.slf4j.Logger;
@@ -16,7 +14,6 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
-@SuppressWarnings("deprecation")
 public class JettyHttpClientService implements IHttpClientService {
     private static final Logger log = LoggerFactory.getLogger(JettyHttpClientService.class);
     private static final String NAME = "HttpClient";
@@ -24,10 +21,6 @@ public class JettyHttpClientService implements IHttpClientService {
 
     // limit changing Tor identity on network error every 4 minutes
     private static final int RATE_CHANGE_IDENTITY_ON_NETWORK_ERROR = 4 * 60 * 1000;
-
-    static {
-        Log.getProperties().setProperty("org.eclipse.jetty.util.log.announce", "false");
-    }
 
     protected Map<HttpUsage, JettyHttpClient> httpClients; // used by Sparrow
     private final IHttpProxySupplier httpProxySupplier;
@@ -61,16 +54,15 @@ public class JettyHttpClientService implements IHttpClientService {
     }
 
     @Override
-    public JettyHttpClient getHttpClient(HttpUsage httpUsage) {
-        JettyHttpClient httpClient = httpClients.get(httpUsage);
-        if(httpClient == null) {
+    public synchronized JettyHttpClient getHttpClient(HttpUsage httpUsage) {
+        //Synchronized with stop() and changeIdentity(), and with a subclass changing the proxy under this lock, so that no client is created between stopping the clients
+        //and changing the settings they were created from
+        return httpClients.computeIfAbsent(httpUsage, usage -> {
             if(log.isDebugEnabled()) {
-                log.debug("+httpClient[" + httpUsage + "]");
+                log.debug("+httpClient[" + usage + "]");
             }
-            httpClient = computeHttpClient(httpUsage);
-            httpClients.put(httpUsage, httpClient);
-        }
-        return httpClient;
+            return computeHttpClient(usage);
+        });
     }
 
     protected JettyHttpClient computeHttpClient(HttpUsage httpUsage) {
@@ -81,11 +73,11 @@ public class JettyHttpClientService implements IHttpClientService {
 
     protected HttpClient computeJettyClient(HttpUsage httpUsage) {
         // we use jetty for proxy SOCKS support
-        HttpClient jettyHttpClient = new HttpClient(new SslContextFactory());
-        // jettyHttpClient.setSocketAddressResolver(new MySocketAddressResolver());
+        HttpClient jettyHttpClient = new HttpClient();
 
         // prevent user-agent tracking
         jettyHttpClient.setUserAgentField(null);
+        jettyHttpClient.setFollowRedirects(httpUsage.isFollowRedirects());
 
         // configure
         configureProxy(jettyHttpClient, httpUsage);
@@ -115,8 +107,7 @@ public class JettyHttpClientService implements IHttpClientService {
             if(log.isDebugEnabled()) {
                 log.debug("+httpClient: proxy=" + httpProxy);
             }
-            ProxyConfiguration.Proxy jettyProxy = computeJettyProxy(httpProxy);
-            jettyHttpClient.getProxyConfiguration().getProxies().add(jettyProxy);
+            jettyHttpClient.getProxyConfiguration().addProxy(computeJettyProxy(httpProxy));
         } else {
             if(log.isDebugEnabled()) {
                 log.debug("+httpClient: no proxy");
@@ -134,20 +125,12 @@ public class JettyHttpClientService implements IHttpClientService {
         jettyHttpClient.setScheduler(new ScheduledExecutorScheduler(name + "-scheduler", true));
     }
 
-    protected ProxyConfiguration.Proxy computeJettyProxy(HttpProxy httpProxy) {
-        ProxyConfiguration.Proxy jettyProxy = null;
-        switch(httpProxy.getProtocol()) {
-            case SOCKS:
-                jettyProxy = new Socks4Proxy(httpProxy.getHost(), httpProxy.getPort());
-                break;
-            case SOCKS5:
-                jettyProxy = new Socks5Proxy(httpProxy.getHost(), httpProxy.getPort());
-                break;
-            case HTTP:
-                jettyProxy = new org.eclipse.jetty.client.HttpProxy(httpProxy.getHost(), httpProxy.getPort());
-                break;
-        }
-        return jettyProxy;
+    protected static ProxyConfiguration.Proxy computeJettyProxy(HttpProxy httpProxy) {
+        return switch(httpProxy.getProtocol()) {
+            case SOCKS -> new Socks4Proxy(httpProxy.getHost(), httpProxy.getPort());
+            case SOCKS5 -> new Socks5Proxy(httpProxy.getHost(), httpProxy.getPort());
+            case HTTP -> new org.eclipse.jetty.client.HttpProxy(httpProxy.getHost(), httpProxy.getPort());
+        };
     }
 
     @Override
@@ -159,7 +142,8 @@ public class JettyHttpClientService implements IHttpClientService {
     }
 
     @Override
-    public void changeIdentity() {
+    public synchronized void changeIdentity() {
+        //Holds the lock getHttpClient() takes, so that no client opens a connection on the previous identity between the two
         stop();
         httpProxySupplier.changeIdentity();
     }

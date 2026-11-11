@@ -1,12 +1,12 @@
 package com.sparrowwallet.tern.http.client;
 
+import org.eclipse.jetty.client.ContentResponse;
+import org.eclipse.jetty.client.FormRequestContent;
 import org.eclipse.jetty.client.HttpClient;
-import org.eclipse.jetty.client.api.ContentResponse;
-import org.eclipse.jetty.client.api.Request;
-import org.eclipse.jetty.client.api.Response;
-import org.eclipse.jetty.client.util.FormContentProvider;
-import org.eclipse.jetty.client.util.InputStreamResponseListener;
-import org.eclipse.jetty.client.util.StringContentProvider;
+import org.eclipse.jetty.client.InputStreamResponseListener;
+import org.eclipse.jetty.client.Request;
+import org.eclipse.jetty.client.Response;
+import org.eclipse.jetty.client.StringRequestContent;
 import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.util.Fields;
@@ -29,6 +29,7 @@ public class JettyHttpClient extends JacksonHttpClient {
     private final HttpClient httpClient;
     private final long requestTimeout;
     private final HttpUsage httpUsage;
+    private volatile boolean stopped;
 
     public JettyHttpClient(Consumer<Exception> onNetworkError, HttpClient httpClient, long requestTimeout, HttpUsage httpUsage) {
         super(onNetworkError);
@@ -38,9 +39,16 @@ public class JettyHttpClient extends JacksonHttpClient {
     }
 
     @Override
-    public void connect() throws HttpException {
+    public synchronized void connect() throws HttpException {
+        //A request that obtained this client before it was stopped must not start it again, outside the service and configured from the settings being replaced.
+        //Not a network error, which would be retried with a new Tor identity.
+        if(stopped) {
+            throw new HttpSystemException("HTTP client " + httpUsage + " has been stopped");
+        }
+
         try {
-            if(!httpClient.isRunning()) {
+            //isRunning() is also true while starting, so check isStarted() before sending
+            if(!httpClient.isStarted()) {
                 httpClient.start();
             }
         } catch(Exception e) {
@@ -48,7 +56,8 @@ public class JettyHttpClient extends JacksonHttpClient {
         }
     }
 
-    public void restart() {
+    public synchronized void restart() {
+        stopped = false;
         try {
             if(log.isDebugEnabled()) {
                 log.debug("restart");
@@ -62,7 +71,8 @@ public class JettyHttpClient extends JacksonHttpClient {
         }
     }
 
-    public void stop() {
+    public synchronized void stop() {
+        stopped = true;
         try {
             if(httpClient.isRunning()) {
                 httpClient.stop();
@@ -85,7 +95,7 @@ public class JettyHttpClient extends JacksonHttpClient {
     @Override
     protected String requestJsonPost(String urlStr, Map<String, String> headers, String jsonBody) throws HttpException {
         Request req = computeHttpRequest(urlStr, HttpMethod.POST, headers);
-        req.content(new StringContentProvider(CONTENTTYPE_APPLICATION_JSON, jsonBody, StandardCharsets.UTF_8));
+        req.body(new StringRequestContent(CONTENTTYPE_APPLICATION_JSON, jsonBody, StandardCharsets.UTF_8));
         return makeRequest(req, false);
     }
 
@@ -93,14 +103,14 @@ public class JettyHttpClient extends JacksonHttpClient {
     protected String requestStringPost(String urlStr, Map<String, String> headers, String contentType, String content) throws HttpException {
         log.debug("POST " + urlStr);
         Request req = computeHttpRequest(urlStr, HttpMethod.POST, headers);
-        req.content(new StringContentProvider(content), contentType);
+        req.body(new StringRequestContent(contentType, content));
         return makeRequest(req, false);
     }
 
     @Override
     protected String requestJsonPostUrlEncoded(String urlStr, Map<String, String> headers, Map<String, String> body) throws HttpException {
         Request req = computeHttpRequest(urlStr, HttpMethod.POST, headers);
-        req.content(new FormContentProvider(computeBodyFields(body)));
+        req.body(new FormRequestContent(computeBodyFields(body)));
         return makeRequest(req, false);
     }
 
@@ -123,7 +133,7 @@ public class JettyHttpClient extends JacksonHttpClient {
             try {
                 response = listener.get(requestTimeout, TimeUnit.MILLISECONDS);
             } catch(Exception e) {
-                throw new HttpNetworkException(e);
+                throw requestFailed(e);
             }
 
             // Read content
@@ -138,12 +148,32 @@ public class JettyHttpClient extends JacksonHttpClient {
             try {
                 response = req.send();
             } catch(Exception e) {
-                throw new HttpNetworkException(e);
+                throw requestFailed(e);
             }
             checkResponseStatus(response.getStatus(), response.getContentAsString());
             responseContent = response.getContentAsString();
         }
         return responseContent;
+    }
+
+    //Sent once on the calling thread. Unlike the JSON and string requests, a network error is not retried with a new Tor identity, as a failed download of
+    //incidental content such as an image does not warrant changing the identity used for every other request.
+    public byte[] getBytes(String urlStr, Map<String, String> headers) throws HttpException {
+        Request req = computeHttpRequest(urlStr, HttpMethod.GET, headers);
+        ContentResponse response;
+        try {
+            response = req.send();
+        } catch(Exception e) {
+            throw requestFailed(e);
+        }
+        //Not logged, as the body is binary
+        checkResponseStatus(response.getStatus(), null);
+        return response.getContent();
+    }
+
+    //A request aborted by stop() is not a network error, which would be retried with a new Tor identity
+    private HttpException requestFailed(Exception e) {
+        return stopped ? new HttpSystemException(e) : new HttpNetworkException(e);
     }
 
     private void checkResponseStatus(int status, String responseBody) throws HttpResponseException {
@@ -174,9 +204,7 @@ public class JettyHttpClient extends JacksonHttpClient {
         Request req = getJettyHttpClient().newRequest(url);
         req.method(method);
         if(headers != null) {
-            for(Map.Entry<String, String> entry : headers.entrySet()) {
-                req.header(entry.getKey(), entry.getValue());
-            }
+            req.headers(fields -> headers.forEach(fields::put));
         }
         req.timeout(requestTimeout, TimeUnit.MILLISECONDS);
         return req;

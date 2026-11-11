@@ -32,12 +32,20 @@ public class HttpClientService extends JettyHttpClientService {
         return getHttpClient(HttpUsage.DEFAULT).getJson(url, responseType, headers);
     }
 
+    public byte[] requestBytes(String url, Map<String, String> headers) throws Exception {
+        return getHttpClient(HttpUsage.DEFAULT).getBytes(url, headers);
+    }
+
     public <T> Observable<Optional<T>> postJson(String url, Class<T> responseType, Map<String, String> headers, Object body) {
         return getHttpClient(HttpUsage.DEFAULT).postJson(url, responseType, headers, body).toObservable();
     }
 
     public String postString(String url, Map<String, String> headers, String contentType, String content) throws Exception {
-        IHttpClient httpClient = getHttpClient(HttpUsage.DEFAULT);
+        return postString(HttpUsage.DEFAULT, url, headers, contentType, content);
+    }
+
+    public String postString(HttpUsage httpUsage, String url, Map<String, String> headers, String contentType, String content) throws Exception {
+        IHttpClient httpClient = getHttpClient(httpUsage);
         return AsyncUtil.getInstance().blockingGet(httpClient.postString(url, headers, contentType, content)).get();
     }
 }

@@ -6,13 +6,26 @@ public class HttpUsage {
     public static final HttpUsage DEFAULT = new HttpUsage("Default");
 
     private final String name;
+    private final boolean followRedirects;
 
     public HttpUsage(String name) {
+        this(name, true);
+    }
+
+    /**
+     * @param followRedirects false to return a redirect response as an HttpResponseException rather than following it, for requests whose body must reach only the url given
+     */
+    public HttpUsage(String name, boolean followRedirects) {
         this.name = name;
+        this.followRedirects = followRedirects;
     }
 
     public String getName() {
         return name;
+    }
+
+    public boolean isFollowRedirects() {
+        return followRedirects;
     }
 
     @Override
@@ -29,11 +42,11 @@ public class HttpUsage {
             return false;
         }
         HttpUsage httpUsage = (HttpUsage) o;
-        return Objects.equals(name, httpUsage.name);
+        return followRedirects == httpUsage.followRedirects && Objects.equals(name, httpUsage.name);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(name);
+        return Objects.hash(name, followRedirects);
     }
 }

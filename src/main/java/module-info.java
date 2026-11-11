@@ -1,5 +1,4 @@
 module com.sparrowwallet.tern {
-    requires java.management;
     requires io.reactivex.rxjava2;
     requires com.fasterxml.jackson.databind;
     requires org.eclipse.jetty.io;
