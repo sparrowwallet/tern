@@ -48,7 +48,7 @@ public class HttpEndpointClient implements Closeable {
      * @param proxy the proxy to connect through, or null to connect directly. A SOCKS proxy is given the server's hostname to resolve.
      * @param sslContext the context that authenticates an https server, or null for the default trust store and hostname verification.
      *                   The hostname is not verified against a context given here, which must authenticate the server itself, for example with a pinned certificate.
-     * @param connectTimeout the time allowed to open a connection, including through the proxy
+     * @param connectTimeout the time allowed to open a connection, including the proxy's connection onwards to the server
      * @param idleTimeout the time an unused connection is kept open for the next request
      */
     public HttpEndpointClient(String name, HttpProxy proxy, SSLContext sslContext, Duration connectTimeout, Duration idleTimeout) throws IOException {
@@ -63,7 +63,17 @@ public class HttpEndpointClient implements Closeable {
         httpClient.setUserAgentField(null);
         httpClient.setFollowRedirects(false);
         httpClient.setConnectTimeout(connectTimeout.toMillis());
-        httpClient.setIdleTimeout(idleTimeout.toMillis());
+        //The connect timeout covers only the connection to the proxy, and the idle timeout bounds the proxy's connection onwards, which through Tor to an onion service
+        //may first build a circuit. A new connection is therefore allowed the connect timeout until it opens, and then the idle timeout while kept open between requests.
+        httpClient.setIdleTimeout(Math.max(connectTimeout.toMillis(), idleTimeout.toMillis()));
+        httpClient.addBean(new org.eclipse.jetty.io.Connection.Listener() {
+            @Override
+            public void onOpened(org.eclipse.jetty.io.Connection connection) {
+                if(connection instanceof Connection) {
+                    connection.getEndPoint().setIdleTimeout(idleTimeout.toMillis());
+                }
+            }
+        });
         if(proxy != null) {
             httpClient.getProxyConfiguration().addProxy(JettyHttpClientService.computeJettyProxy(proxy));
         }

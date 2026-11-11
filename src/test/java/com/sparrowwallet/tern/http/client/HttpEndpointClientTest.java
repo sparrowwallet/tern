@@ -363,6 +363,49 @@ public class HttpEndpointClientTest {
     }
 
     @Test
+    public void slowProxyConnectionIsAllowedTheConnectTimeout() throws Exception {
+        assertSlowProxyConnectionIsAllowedTheConnectTimeout(null);
+    }
+
+    @Test
+    public void slowProxyConnectionOverTlsIsAllowedTheConnectTimeout() throws Exception {
+        assertSlowProxyConnectionIsAllowedTheConnectTimeout(createKeyStore("slow"));
+    }
+
+    private void assertSlowProxyConnectionIsAllowedTheConnectTimeout(KeyStore keyStore) throws Exception {
+        HttpServer server = track(new HttpServer(keyStore == null ? null : createServerContext(keyStore), request -> ok("{}")));
+        SocksProxy proxy = track(new SocksProxy(server.getPort()));
+        proxy.connectDelayMillis = 1500;
+        SSLContext clientContext = keyStore == null ? null : createClientContext((X509Certificate)keyStore.getCertificate(keyStore.aliases().nextElement()));
+        HttpEndpointClient client = track(new HttpEndpointClient("test", new HttpProxy(HttpProxyProtocol.SOCKS5, "127.0.0.1", proxy.getPort()), clientContext,
+                Duration.ofSeconds(5), Duration.ofMillis(500)));
+        assertEquals(200, send(client, (keyStore == null ? "http" : "https") + "://slownode.onion:8332/").statusCode());
+    }
+
+    @Test
+    public void unusedConnectionIsClosedAfterTheIdleTimeout() throws Exception {
+        assertUnusedConnectionIsClosedAfterTheIdleTimeout(null);
+    }
+
+    @Test
+    public void unusedConnectionOverTlsIsClosedAfterTheIdleTimeout() throws Exception {
+        assertUnusedConnectionIsClosedAfterTheIdleTimeout(createKeyStore("idle"));
+    }
+
+    private void assertUnusedConnectionIsClosedAfterTheIdleTimeout(KeyStore keyStore) throws Exception {
+        HttpServer server = track(new HttpServer(keyStore == null ? null : createServerContext(keyStore), request -> ok("{}")));
+        SocksProxy proxy = track(new SocksProxy(server.getPort()));
+        SSLContext clientContext = keyStore == null ? null : createClientContext((X509Certificate)keyStore.getCertificate(keyStore.aliases().nextElement()));
+        HttpEndpointClient client = track(new HttpEndpointClient("test", new HttpProxy(HttpProxyProtocol.SOCKS5, "127.0.0.1", proxy.getPort()), clientContext,
+                Duration.ofSeconds(5), Duration.ofMillis(500)));
+        String uri = (keyStore == null ? "http" : "https") + "://node.onion:8332/";
+        assertEquals(200, send(client, uri).statusCode());
+        sleep(1500);
+        assertEquals(200, send(client, uri).statusCode());
+        assertEquals(2, proxy.connectTargets.size());
+    }
+
+    @Test
     public void reusedConnectionClosedUnansweredIsSentAgain() throws Exception {
         //The first connection answers one request and closes on the next, as a server closing an idle connection as the request arrives
         HttpServer server = track(new HttpServer(null, perConnection((connection, request) -> connection == 1 && request == 2 ? null : ok("{}"))));
@@ -610,6 +653,8 @@ public class HttpEndpointClientTest {
     private static class SocksProxy implements Closeable {
         private final ServerSocket serverSocket = new ServerSocket(0, 50, InetAddress.getLoopbackAddress());
         private final List<String> connectTargets = new CopyOnWriteArrayList<>();
+        //Delays the reply to each CONNECT, as Tor does while building a circuit to an onion service
+        private volatile long connectDelayMillis;
 
         SocksProxy(int relayPort) throws IOException {
             daemon(() -> {
@@ -644,6 +689,7 @@ public class HttpEndpointClientTest {
                         default -> throw new IOException("Unknown SOCKS5 address type");
                     };
                     connectTargets.add("SOCKS5 " + address + ":" + in.readUnsignedShort());
+                    Thread.sleep(connectDelayMillis);
                     out.write(new byte[] {5, 0, 0, 1, 0, 0, 0, 0, 0, 0});
                 } else if(version == 4) {
                     in.readUnsignedByte();
