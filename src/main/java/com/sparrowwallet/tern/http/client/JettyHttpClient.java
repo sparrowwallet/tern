@@ -133,7 +133,7 @@ public class JettyHttpClient extends JacksonHttpClient {
             try {
                 response = listener.get(requestTimeout, TimeUnit.MILLISECONDS);
             } catch(Exception e) {
-                throw requestFailed(e);
+                throw requestFailed(req, e);
             }
 
             // Read content
@@ -148,7 +148,7 @@ public class JettyHttpClient extends JacksonHttpClient {
             try {
                 response = req.send();
             } catch(Exception e) {
-                throw requestFailed(e);
+                throw requestFailed(req, e);
             }
             checkResponseStatus(response.getStatus(), response.getContentAsString());
             responseContent = response.getContentAsString();
@@ -164,15 +164,21 @@ public class JettyHttpClient extends JacksonHttpClient {
         try {
             response = req.send();
         } catch(Exception e) {
-            throw requestFailed(e);
+            throw requestFailed(req, e);
         }
         //Not logged, as the body is binary
         checkResponseStatus(response.getStatus(), null);
         return response.getContent();
     }
 
-    //A request aborted by stop() is not a network error, which would be retried with a new Tor identity
-    private HttpException requestFailed(Exception e) {
+    //A request interrupted by its caller or aborted by stop() is not a network error, which would be retried with a new Tor identity
+    private HttpException requestFailed(Request req, Exception e) {
+        if(e instanceof InterruptedException) {
+            req.abort(e);
+            Thread.currentThread().interrupt();
+            return new HttpSystemException(e);
+        }
+
         return stopped ? new HttpSystemException(e) : new HttpNetworkException(e);
     }
 

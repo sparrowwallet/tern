@@ -148,7 +148,14 @@ public abstract class JacksonHttpClient implements IHttpClient {
     }
 
     protected <T> Single<Optional<T>> httpObservable(final Callable<T> supplier) {
-        return Single.fromCallable(() -> Optional.ofNullable(supplier.call())).subscribeOn(Schedulers.io());
+        return Single.<Optional<T>>create(emitter -> {
+            try {
+                emitter.onSuccess(Optional.ofNullable(supplier.call()));
+            } catch(Throwable e) {
+                //Dropped where the caller has already disposed of the request, typically by interrupting it, rather than reported as undeliverable
+                emitter.tryOnError(e);
+            }
+        }).subscribeOn(Schedulers.io());
     }
 
     protected <T> T httpObservableBlockingSingle(final Callable<T> supplier) throws HttpException {

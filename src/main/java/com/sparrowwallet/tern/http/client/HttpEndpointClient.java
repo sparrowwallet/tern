@@ -20,7 +20,10 @@ import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
+import java.util.Collections;
 import java.util.Map;
+import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -37,6 +40,8 @@ public class HttpEndpointClient implements Closeable {
     private static final int MAX_RESPONSE_LENGTH = Integer.MAX_VALUE;
 
     private final HttpClient httpClient;
+    //Connections that have carried a response and are kept open for the next request
+    private final Set<Connection> reusedConnections = Collections.synchronizedSet(Collections.newSetFromMap(new WeakHashMap<>()));
 
     /**
      * @param name the name given to the client's threads
@@ -80,7 +85,8 @@ public class HttpEndpointClient implements Closeable {
     }
 
     /**
-     * Sends a request and waits for the complete response.
+     * Sends a request and waits for the complete response. A request sent on a connection kept open from an earlier response, which the server closes without answering,
+     * is sent once more on a new connection.
      *
      * @param contentType the content type of the body, or null for none
      * @param body the request body, or null for none
@@ -90,6 +96,10 @@ public class HttpEndpointClient implements Closeable {
      * @throws IOException if the request could not be sent or the response could not be read, with the cause as thrown by the connection where it was an IOException
      */
     public Response send(String method, URI uri, Map<String, String> headers, String contentType, byte[] body, Duration readTimeout) throws IOException {
+        return send(method, uri, headers, contentType, body, readTimeout, true);
+    }
+
+    private Response send(String method, URI uri, Map<String, String> headers, String contentType, byte[] body, Duration readTimeout, boolean resendIfReused) throws IOException {
         Request request = httpClient.newRequest(uri).method(method).idleTimeout(readTimeout.toMillis(), TimeUnit.MILLISECONDS);
         if(headers != null) {
             request.headers(fields -> headers.forEach(fields::put));
@@ -103,6 +113,9 @@ public class HttpEndpointClient implements Closeable {
         request.onResponseBegin(response -> {
             responseBegun.set(true);
             Connection connection = response.getRequest().getConnection();
+            if(connection != null) {
+                reusedConnections.add(connection);
+            }
             EndPoint.SslSessionData sslSessionData = connection == null ? null : connection.getSslSessionData();
             if(sslSessionData != null && sslSessionData.peerCertificates() != null) {
                 serverCertificates.set(sslSessionData.peerCertificates());
@@ -123,6 +136,10 @@ public class HttpEndpointClient implements Closeable {
             Throwable cause = e.getCause();
             if(cause instanceof EOFException && responseBegun.get()) {
                 throw new IOException("Connection closed before the response from " + uri.getAuthority() + " was complete", cause);
+            } else if(cause instanceof EOFException && resendIfReused && reusedConnections.contains(request.getConnection())) {
+                //A server closes a connection it has kept open once idle, and may do so as this request is sent on it, before reading the request. Sent once more
+                //on a new connection, as HttpURLConnection does. A request on a new connection that is closed unanswered was refused, and is not sent again.
+                return send(method, uri, headers, contentType, body, readTimeout, false);
             } else if(cause instanceof IOException ioException) {
                 throw ioException;
             } else if(cause instanceof TimeoutException) {

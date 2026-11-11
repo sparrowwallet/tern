@@ -1,5 +1,6 @@
 package com.sparrowwallet.tern.http.client;
 
+import io.reactivex.plugins.RxJavaPlugins;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -27,6 +28,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -36,6 +38,8 @@ public class HttpEndpointClientTest {
     private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration READ_TIMEOUT = Duration.ofSeconds(5);
     private static final String STORE_PASSWORD = "changeit";
+    //Returned by a handler to reset the connection rather than close it
+    private static final String RESET = new String("RESET");
 
     @TempDir
     private Path tempDir;
@@ -184,6 +188,57 @@ public class HttpEndpointClientTest {
     }
 
     @Test
+    public void httpClientServiceInterruptedRequestIsNotRetriedOrReported() throws Exception {
+        HttpServer server = track(new HttpServer(null, request -> {
+            sleep(3000);
+            return ok("{\"value\":1}");
+        }));
+        AtomicInteger identityChanges = new AtomicInteger();
+        HttpClientService service = new HttpClientService(new IHttpProxySupplier() {
+            @Override
+            public Optional<HttpProxy> getHttpProxy(HttpUsage httpUsage) {
+                return Optional.empty();
+            }
+
+            @Override
+            public void changeIdentity() {
+                identityChanges.incrementAndGet();
+            }
+        });
+        List<Throwable> undelivered = new CopyOnWriteArrayList<>();
+        RxJavaPlugins.setErrorHandler(undelivered::add);
+        try {
+            //As a cancelled service interrupts the thread waiting for its request
+            Thread caller = new Thread(() -> {
+                try {
+                    service.requestJson("http://127.0.0.1:" + server.getPort() + "/", Map.class, null);
+                } catch(Exception e) {
+                    //Expected on interruption
+                }
+            });
+            caller.start();
+            assertTimeoutPreemptively(Duration.ofSeconds(10), () -> {
+                while(server.requests.get() == 0) {
+                    Thread.sleep(10);
+                }
+            });
+
+            caller.interrupt();
+            caller.join(10000);
+            assertFalse(caller.isAlive());
+            //Allows the abandoned request time to fail, or to be sent again
+            Thread.sleep(1000);
+
+            assertEquals(1, server.requests.get());
+            assertEquals(0, identityChanges.get());
+            assertTrue(undelivered.isEmpty(), undelivered.toString());
+        } finally {
+            RxJavaPlugins.reset();
+            service.stop();
+        }
+    }
+
+    @Test
     public void httpClientServiceUsageWithoutRedirectsReturnsTheRedirect() throws Exception {
         HttpServer target = track(new HttpServer(null, request -> ok("followed")));
         HttpServer server = track(new HttpServer(null, request -> "HTTP/1.1 307 Temporary Redirect\r\nLocation: http://127.0.0.1:" + target.getPort() + "/\r\nContent-Length: 0\r\n\r\n"));
@@ -304,6 +359,42 @@ public class HttpEndpointClientTest {
         HttpEndpointClient client = track(new HttpEndpointClient("test", null, null, CONNECT_TIMEOUT, IDLE_TIMEOUT));
         assertTimeoutPreemptively(Duration.ofSeconds(10), () -> assertThrows(EOFException.class,
                 () -> client.send("POST", new URI("http://127.0.0.1:" + server.getPort() + "/"), null, "application/json", "{}".getBytes(StandardCharsets.UTF_8), READ_TIMEOUT)));
+        assertEquals(1, server.connections.get());
+    }
+
+    @Test
+    public void reusedConnectionClosedUnansweredIsSentAgain() throws Exception {
+        //The first connection answers one request and closes on the next, as a server closing an idle connection as the request arrives
+        HttpServer server = track(new HttpServer(null, perConnection((connection, request) -> connection == 1 && request == 2 ? null : ok("{}"))));
+        HttpEndpointClient client = track(new HttpEndpointClient("test", null, null, CONNECT_TIMEOUT, IDLE_TIMEOUT));
+        String uri = "http://127.0.0.1:" + server.getPort() + "/";
+        assertEquals(200, post(client, uri).statusCode());
+        assertEquals(200, post(client, uri).statusCode());
+        assertEquals(2, server.connections.get());
+        assertEquals(3, server.requests.get());
+    }
+
+    @Test
+    public void reusedConnectionResetUnansweredIsSentAgain() throws Exception {
+        HttpServer server = track(new HttpServer(null, perConnection((connection, request) -> connection == 1 && request == 2 ? RESET : ok("{}"))));
+        HttpEndpointClient client = track(new HttpEndpointClient("test", null, null, CONNECT_TIMEOUT, IDLE_TIMEOUT));
+        String uri = "http://127.0.0.1:" + server.getPort() + "/";
+        assertEquals(200, post(client, uri).statusCode());
+        assertEquals(200, post(client, uri).statusCode());
+        assertEquals(2, server.connections.get());
+        assertEquals(3, server.requests.get());
+    }
+
+    @Test
+    public void resentRequestClosedUnansweredIsNotSentAgain() throws Exception {
+        HttpServer server = track(new HttpServer(null, perConnection((connection, request) -> connection == 1 && request == 1 ? ok("{}") : null)));
+        HttpEndpointClient client = track(new HttpEndpointClient("test", null, null, CONNECT_TIMEOUT, IDLE_TIMEOUT));
+        String uri = "http://127.0.0.1:" + server.getPort() + "/";
+        assertEquals(200, post(client, uri).statusCode());
+        assertTimeoutPreemptively(Duration.ofSeconds(10), () -> assertThrows(EOFException.class,
+                () -> client.send("POST", new URI(uri), null, "application/json", "{}".getBytes(StandardCharsets.UTF_8), READ_TIMEOUT)));
+        assertEquals(2, server.connections.get());
+        assertEquals(3, server.requests.get());
     }
 
     @Test
@@ -356,6 +447,20 @@ public class HttpEndpointClientTest {
     private <T extends Closeable> T track(T resource) {
         resources.add(resource);
         return resource;
+    }
+
+    private static HttpEndpointClient.Response post(HttpEndpointClient client, String uri) {
+        return assertTimeoutPreemptively(Duration.ofSeconds(10), () -> client.send("POST", new URI(uri), null, "application/json", "{}".getBytes(StandardCharsets.UTF_8), READ_TIMEOUT));
+    }
+
+    //Numbers each connection from 1 in the order of its first request, and each request on it from 1, as each connection is served on its own thread
+    private static Function<String, String> perConnection(BiFunction<Integer, Integer, String> handler) {
+        AtomicInteger connections = new AtomicInteger();
+        ThreadLocal<int[]> connectionRequests = ThreadLocal.withInitial(() -> new int[] {connections.incrementAndGet(), 0});
+        return request -> {
+            int[] counts = connectionRequests.get();
+            return handler.apply(counts[0], ++counts[1]);
+        };
     }
 
     private static HttpEndpointClient.Response send(HttpEndpointClient client, String uri) {
@@ -478,7 +583,10 @@ public class HttpEndpointClientTest {
                     requests.incrementAndGet();
 
                     String response = handler.apply(request.toString());
-                    if(response == null) {
+                    if(response == RESET) {
+                        socket.setSoLinger(true, 0);
+                        return;
+                    } else if(response == null) {
                         return;
                     }
                     socket.getOutputStream().write(response.getBytes(StandardCharsets.UTF_8));
