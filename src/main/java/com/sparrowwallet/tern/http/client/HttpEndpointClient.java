@@ -18,6 +18,7 @@ import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.net.SocketTimeoutException;
 import java.net.URI;
+import java.nio.channels.AsynchronousCloseException;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.util.Collections;
@@ -144,6 +145,13 @@ public class HttpEndpointClient implements Closeable {
             throw interruptedIOException;
         } catch(ExecutionException e) {
             Throwable cause = e.getCause();
+            if(cause instanceof AsynchronousCloseException && httpClient.isRunning()) {
+                //The end of the stream on a connection the server closes as the request is sent can fail the request with the close it causes, rather than as the end itself
+                EOFException eofException = new EOFException("Connection to " + uri.getAuthority() + " closed");
+                eofException.initCause(cause);
+                cause = eofException;
+            }
+
             if(cause instanceof EOFException && responseBegun.get()) {
                 throw new IOException("Connection closed before the response from " + uri.getAuthority() + " was complete", cause);
             } else if(cause instanceof EOFException && resendIfReused && reusedConnections.contains(request.getConnection())) {
