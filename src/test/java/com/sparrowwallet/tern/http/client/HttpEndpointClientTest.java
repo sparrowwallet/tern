@@ -272,6 +272,26 @@ public class HttpEndpointClientTest {
     }
 
     @Test
+    public void httpClientServiceDoesNotReturnCookies() throws Exception {
+        List<String> requests = new CopyOnWriteArrayList<>();
+        HttpServer server = track(new HttpServer(null, request -> {
+            requests.add(request);
+            return response(200, "ok", "Set-Cookie: id=linked; Path=/\r\n");
+        }));
+        HttpClientService service = new HttpClientService();
+        try {
+            for(int i = 0; i < 2; i++) {
+                String url = "http://127.0.0.1:" + server.getPort() + "/";
+                assertEquals("ok", assertTimeoutPreemptively(Duration.ofSeconds(10), () -> service.postString(url, null, "text/plain", "body")));
+            }
+            assertEquals(2, requests.size());
+            assertFalse(requests.get(1).toLowerCase(java.util.Locale.ROOT).contains("\r\ncookie:"), requests.get(1));
+        } finally {
+            service.stop();
+        }
+    }
+
+    @Test
     public void requestIsSentAndErrorResponseIsReturnedWithBody() throws Exception {
         List<String> requests = new CopyOnWriteArrayList<>();
         HttpServer server = track(new HttpServer(null, request -> {

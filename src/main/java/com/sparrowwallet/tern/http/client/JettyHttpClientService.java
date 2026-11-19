@@ -4,6 +4,7 @@ import org.eclipse.jetty.client.HttpClient;
 import org.eclipse.jetty.client.ProxyConfiguration;
 import org.eclipse.jetty.client.Socks4Proxy;
 import org.eclipse.jetty.client.Socks5Proxy;
+import org.eclipse.jetty.http.HttpCookieStore;
 import org.eclipse.jetty.util.thread.QueuedThreadPool;
 import org.eclipse.jetty.util.thread.ScheduledExecutorScheduler;
 import org.slf4j.Logger;
@@ -77,6 +78,9 @@ public class JettyHttpClientService implements IHttpClientService {
 
         // prevent user-agent tracking
         jettyHttpClient.setUserAgentField(null);
+
+        // prevent cookie tracking
+        jettyHttpClient.setHttpCookieStore(new HttpCookieStore.Empty());
         jettyHttpClient.setFollowRedirects(httpUsage.isFollowRedirects());
 
         // configure
