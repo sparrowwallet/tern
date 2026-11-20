@@ -1,22 +1,10 @@
 plugins {
     id 'java'
-    id 'maven-publish'
-}
-
-group = 'com.sparrowwallet'
-version = '1.1.4'
-
-def secrets = new Properties()
-file("publish.properties").withInputStream {
-    stream -> secrets.load(stream)
+    id 'com.vanniktech.maven.publish' version '0.35.0'
 }
 
 repositories {
     mavenCentral()
-}
-
-java {
-    withSourcesJar()
 }
 
 dependencies {
@@ -34,28 +22,10 @@ test {
     useJUnitPlatform()
 }
 
-publishing {
-    repositories {
-        maven {
-            name = "Forgejo-SparrowWallet"
-            url = uri("https://code.sparrowwallet.com/api/packages/sparrowwallet/maven")
-
-            credentials(HttpHeaderCredentials) {
-                name = "Authorization"
-                value = "token ${secrets.token}"
-            }
-
-            authentication {
-                header(HttpHeaderAuthentication)
-            }
-        }
-    }
-
-    publications {
-        maven(MavenPublication) {
-            artifactId = 'tern'
-
-            from components.java
-        }
-    }
+// Reproducible archives: no timestamps, a fixed entry order, and fixed entry modes, so a rebuild of a tagged commit reproduces the published jar.
+tasks.withType(AbstractArchiveTask).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+    filePermissions { unix('rw-r--r--') }
+    dirPermissions { unix('rwxr-xr-x') }
 }
